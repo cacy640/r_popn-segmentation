@@ -1,0 +1,298 @@
+---
+title: "Kruskal-Wallis and Post-hoc"
+date: "Last compiled on `r format(Sys.time(), '%d %b, %Y')`"
+output:
+  rmdformats::readthedown:
+    self_contained: true
+    thumbnails: false
+    lightbox: false
+    toc_depth: 5
+    code_folding: hide
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+```{r include=FALSE}
+# Install and load packages
+packages <- c(
+  "tidyverse",
+  "httr",
+  "table1",
+  "patchwork",
+  "skimr",
+  "psych",
+  "gt",
+  "table1",
+  "purrr",
+  "dunn.test",
+  "reshape2", #for melt 
+  "rio", #package for importing any kinds of dataset
+  "broom", "AICcmodavg", "ggpubr", "rstatix"
+  )
+
+# Change to install = TRUE to install the required packages
+pacman::p_load(packages, character.only = TRUE, install = TRUE)
+
+theme_set(theme_minimal())
+```
+
+
+```{r}
+#cluster_dat <- rio::import(here::here("C:/Users/Wang Jiaxuan/OneDrive - Singapore University of Technology and Design/ORS/02 Community Survey/dataset/segmentation/2 factor/2 factor solution/kmeans_2_factors_FA_clusters4_lifestyle_15feb24.csv")) 
+cluster_dat <- rio::import(here::here("C:/Users/Wang Jiaxuan/OneDrive - Singapore University of Technology and Design/ORS/02 Community Survey/dataset/segmentation/4 factor/4 factor solution/kmeans_4_factors_clusters4_lifestyle_14feb24.csv")) 
+```
+
+<!--## ANOVA-->
+
+<!--```{r}
+# Selecting numeric variables for the test
+#numeric_vars <- cluster_dat %>% select(-(1:14), -(18:29), -"Income_Personal", -"Income_Household", -clusters) %>% colnames() # Removing the categorical variable
+
+numeric_vars <- cluster_dat %>% select(-1,-(37:49), -(54:65),  -"Income_Personal", -"Income_Household", -clusters) %>%
+  select("Health", "wellbeing", "nature_relatedness", everything())%>% colnames()
+```-->
+
+<!-- ```{r}
+cluster_dat <- factor(cluster_dat$clusters)
+aov_dat <- cluster_dat %>% select(-(1:14), -(18:29), -"Income_Personal", -"Income_Household")
+
+aov_dat <- na.omit(aov_dat)
+
+# boxplots and oneway-tests for the 4 variables at once
+for (i in 1:36) { # variables to compare are variables 1 to 4
+  boxplot(aov_dat[, i] ~ aov_dat$clusters, na.action = na.omit, # draw boxplots by group
+    ylab = names(aov_dat[i]), # rename y-axis with variable's name
+    xlab = "Clusters"
+  )
+  aov_res <- oneway.test(aov_dat[, i] ~ aov_dat$clusters, na.action = na.omit)
+  cat("\nOne-way ANOVA for Cluster and ", names(aov_dat[, i]), ", the p-value is ", aov_res$p.value, "\n")
+  #print(oneway.test(aov_dat[, i] ~ aov_dat$clusters, na.action = na.omit)) # print results of t-test
+}
+```-->
+
+<!--```{r}
+aov_dynamic <- function(df, group_col, var_cols) {
+  results <- map(var_cols, ~{
+    test_result <- oneway.test(reformulate(group_col, response = .x), data = df)
+    tibble(variable = .x, p_value = round(test_result$p.value, 3), Test = "One-way ANOVA")
+  }) %>%
+    bind_rows()
+  return(results)
+}
+```-->
+
+<!--```{r}
+aov_dynamic <- aov_dynamic(cluster_dat, "clusters", numeric_vars)
+print(aov_dynamic) %>% gt()
+#print(aov_dynamic) %>% gt() %>% gtsave("2 factor/ANOVA_2factors.docx")
+print(aov_dynamic) %>% gt() %>% gtsave("4 factor/ANOVA_4factors.docx")
+```-->
+
+<!--### Post hoc test
+Tukey Honest Significant Differences
+<!--```{r}
+TukeyHSD(aov(wellbeing ~ factor(clusters)
+             , data = aov_dat), 
+         conf.level=.95)
+
+plot(TukeyHSD(aov(wellbeing ~ factor(clusters)
+             , data = aov_dat), conf.level=.95), las = 2)
+```-->
+
+
+
+
+
+## Kruskal Wallis Test
+
+```{r}
+# Selecting numeric variables for the test
+#numeric_vars <- cluster_dat %>% select(-(1:14), -(18:29), -"Income_Personal", -"Income_Household", -clusters) %>% colnames() # Removing the categorical variable
+
+numeric_vars <- cluster_dat %>% select(-1,-(37:49), -(54:65),  -"Income_Personal", -"Income_Household", -clusters) %>%
+  select("Health", "wellbeing", "nature_relatedness", everything())%>% colnames()
+```
+
+```{r}
+kruskal_test_dynamic <- function(df, group_col, var_cols) {
+  results <- map(var_cols, ~{
+    test_result <- kruskal.test(reformulate(group_col, response = .x), data = df)
+    tibble(variable = .x, p_value = round(test_result$p.value, 3), Test = "Kruskal-Wallis")
+  }) %>%
+    bind_rows()
+  return(results)
+}
+```
+
+```{r}
+# Apply Kruskal-Wallis test
+kruskal_results_dynamic <- kruskal_test_dynamic(cluster_dat, "clusters", numeric_vars)
+print(kruskal_results_dynamic) %>% gt()
+#print(kruskal_results_dynamic) %>% gt() %>% gtsave("2 factor/Kruskal_Wallis_2factors.docx")
+#print(kruskal_results_dynamic) %>% gt() %>% gtsave("4 factor/Kruskal_Wallis_4factors.docx")
+```
+
+- Here, please highlight the variables with significant differences between the clusters
+
+
+
+### Post hoc test
+
+
+- For those scales returned significant result, conduct post hoc test (using Dunn's test) to determine which cluster is significantly different from which
+
+```{r}
+dunn.test::dunn.test(
+  cluster_dat$Perceived_Interruption,
+  cluster_dat$clusters,
+  method = "holm"
+)
+```
+
+```{r}
+dunn_test(data = kw_dat, Health ~ clusters, p.adjust.method = "holm")-> dunn_res
+kruskal_test(Health ~ clusters, data = kw_dat, na.action = na.omit) -> kru_res
+dunn_res <- dunn_res %>% add_xy_position(x = "clusters") 
+ggplot(kw_dat, mapping = aes(x = clusters, y = Health))+
+  geom_boxplot(outlier.shape = NA, na.rm = TRUE) +
+  stat_boxplot(mapping = aes(x = clusters, y = Health), geom='errorbar', 
+               linetype=1, width=0.3)+  #whiskers
+  stat_pvalue_manual(dunn_res, hide.ns = TRUE, 
+                     bracket.nudge.y = 0.3, 
+                     step.increase = 0.04,
+                     coord.flip = TRUE)+
+  labs(
+    title = "Health",
+    subtitle = get_test_label(kru_res, detailed = TRUE)
+    #,caption = get_pwc_label(dunn_res)
+  )  +
+  coord_flip()+
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(size = 8),
+        axis.title.x = element_blank())
+#ggboxplot(kw_dat, x = "clusters", y = "Health", 
+#          notch = FALSE, bxp.errorbar = TRUE,
+#          outlier.shape = NA,
+#          theme = ggplot2::theme_minimal()) + 
+#  stat_pvalue_manual(dunn_res, hide.ns = TRUE, bracket.nudge.y = 0.3, 
+#                     coord.flip = TRUE, tip.length = 0.03)+
+#  labs(
+#    sustitle = get_test_label(kru_res, detailed = TRUE),
+#    caption = get_pwc_label(dunn_res)
+#  ) +
+#  coord_flip()
+```
+
+```{r}
+kw_dat <- cluster_dat %>% select(-1,-(37:49), -(54:65),  -"Income_Personal", -"Income_Household") %>%
+  select("Health", "wellbeing", "nature_relatedness", everything(), "clusters")
+kw_dat$clusters <- as.factor(kw_dat$clusters)
+
+### Need to place cluster variable as the last variable
+mass_kwplot <- function(data, yvars){
+  plot_list = list()
+  
+  for (i in yvars){
+    kru_res <- kruskal_test(data[i] ~ data[ncol(data)], data = data, na.action = na.omit)
+    dunn_res <- dunn_test(data = data, data[i] ~ data[ncol(data)], p.adjust.method = "holm")
+    p <- ggplot(data, mapping = aes(x = data[ncol(data)], y = data[i])) + 
+      geom_boxplot()+
+      stat_pvalue_manual(dunn_res, hide.ns = TRUE, bracket.nudge.y = 0.3) +
+      labs(
+        title = print(names(data[i])),
+        subtitle = get_test_label(kru_res, detailed = TRUE)
+      ) + 
+      coord_flip()
+    
+    plot_list[[i]] <- p
+  }
+  
+  kwplot_facet <- ggarrange(plotlist=plot_list, ncol = 4)
+  return(kwplot_facet)
+}
+
+```
+
+```{r}
+kw_yvars <- kw_dat %>% select(-37) %>% colnames()
+mass_kwplot(kw_dat, "clusters", kw_yvars)
+```
+
+```{r}
+mass_kwplot <- function(df, group_col, var_cols) {
+  plot_list <- list()
+  
+  for (var_col in var_cols) {
+    # Perform Kruskal-Wallis test
+    kruskal_res <- kruskal_test(reformulate(group_col, response = var_col), data = df)
+    # Perform dunn test
+    dunn_res <- dunn_test(data = df, reformulate(group_col, response = var_col), p.adjust.method = "holm")
+    dunn_res <- dunn_res %>% add_xy_position(x = group_col)
+    
+    # If significant, perform Dunn's test
+    p<- ggplot(df, mapping = aes(x = group_col , y = var_col))+
+      geom_boxplot(outlier.shape = NA, na.rm = TRUE) +
+      stat_boxplot(mapping = aes(x = group_col, y = var_col), geom='errorbar', 
+                   linetype=1, width=0.3)+  #whiskers
+      stat_pvalue_manual(dunn_res, hide.ns = TRUE, 
+                         bracket.nudge.y = 0.3, 
+                         step.increase = 0.04,
+                         coord.flip = TRUE)+
+      labs(
+           title = names(var_col)
+           #, subtitle = get_test_label(kru_res, detailed = TRUE)
+           #,caption = get_pwc_label(dunn_res)
+      )  +
+      coord_flip()+
+      theme(plot.title = element_text(hjust = 0.5),
+            plot.subtitle = element_text(size = 8),
+            axis.title.x = element_blank())
+    
+    plot_list[[var_col]] <- p
+  }
+  
+  kwplot_facet <- ggarrange(plotlist=plot_list, ncol = 6, nrow = 6, 
+                            labels = NULL)
+  return(kwplot_facet)
+}
+
+```
+
+
+- Repeat the above test for all the variables with significance. The following functions can be used
+
+```{r}
+perform_posthoc_analysis <- function(df, group_col, var_cols) {
+  results <- list()
+  
+  for (var_col in var_cols) {
+    # Perform Kruskal-Wallis test
+    kruskal_res <- kruskal.test(reformulate(group_col, response = var_col), data = df)
+    cat("Kruskal-Wallis Test for", var_col, "\n")
+    print(kruskal_res)
+    
+    # If significant, perform Dunn's test
+    if (kruskal_res$p.value < 0.05) {
+      cat("\nPerforming Dunn's post hoc test for", var_col, "due to significant Kruskal-Wallis test result.\n")
+      dunn_res <- dunn.test(x = df[[var_col]], g = df[[group_col]], method = "bonferroni")
+      results[[var_col]] <- dunn_res$res
+      print(dunn_res)
+    } else {
+      cat("\nNo significant differences found for", var_col, ", so no post hoc test performed.\n")
+    }
+  }
+  
+  return(results)
+}
+
+# Identify numeric variables (excluding the group variable)
+#numeric_vars <- cluster_dat %>% select(-(1:14), -(18:29), -"Income_Personal", -"Income_Household", -clusters)
+
+# Run the analysis
+posthoc_results <- perform_posthoc_analysis(cluster_dat, "clusters", numeric_vars)
+```
+

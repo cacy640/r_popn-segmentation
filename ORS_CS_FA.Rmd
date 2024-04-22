@@ -1,0 +1,723 @@
+---
+title: "Lifestyle segmentations"
+author: "Jiaxuan"
+date: "Last compiled on `r format(Sys.time(), '%d %b, %Y')`"
+output:
+  rmdformats::readthedown:
+    self_contained: true
+    thumbnails: false
+    lightbox: false
+    toc_depth: 5
+    code_folding: hide
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+```
+
+```{r}
+# Install and load packages
+packages <- c(
+  "tidyverse",
+  "httr",
+  "table1",
+  "patchwork",
+  "skimr",
+  "psych",
+  "corrplot",
+  "car",
+  "factoextra",
+  "gt",
+  "table1",
+  "lavaan",
+  "mirt",
+  "Rtsne",
+  "cluster", #for PAM
+  "reshape2", #for melt 
+  "rio" #package for importing any kinds of dataset
+  )
+
+# Change to install = TRUE to install the required packages
+pacman::p_load(packages, character.only = TRUE, install = TRUE)
+
+library(factoextra)
+
+theme_set(theme_minimal())
+```
+
+```{r}
+#df <- read_csv("C:/Users/Wang Jiaxuan/OneDrive - Singapore University of Technology and Design/ORS/02 Community Survey/dataset/raw data/ORS_cleaned_V8_label.csv")
+raw_dat <- read_csv("C:/Users/Wang Jiaxuan/OneDrive - Singapore University of Technology and Design/ORS/02 Community Survey/dataset/raw data/ORS_cleaned_V8.csv")
+
+nr_df <- read_csv("C:/Users/Wang Jiaxuan/OneDrive - Singapore University of Technology and Design/ORS/02 Community Survey/dataset/segmentation/2 factor/2 factor solution/kmeans_2_factors_FA_clusters4_lifestyle_15feb24.csv") %>%
+  select(id, nature_relatedness, wellbeing)
+```
+
+
+```{r}
+lvl1 <- c('102'=-2, '101'=-1, '0'=0, '1'=1, '2' =2)
+lifestyle_dat_0 <- raw_dat %>%
+  select(1, starts_with("Lifestyle")) %>%
+  mutate_all(as.factor)
+
+recode <- function(x){
+  y<- x+3
+  return(y)
+}
+
+lifestyle_dat_3 <- lifestyle_dat_0 %>% 
+  column_to_rownames(var ="id") %>% 
+  likert2int(., levels = lvl1) %>%  
+  mutate(Lifestyle_10=Lifestyle_10*-1) %>% #view() #reverse coding 10
+  mutate_all(recode) #%>% #view() rownames_to_column(var="id") 
+
+lifestyle_dat_2 <- lifestyle_dat_3 %>%
+  rownames_to_column(var = "id") %>%
+  mutate(id = as.double(id))
+
+
+df0 <- raw_dat %>%
+  select(-starts_with("Lifestyle"), -starts_with("Feeling_"))%>%
+  left_join(nr_df, by = "id") %>%
+  mutate(AgeGroup = as.factor(AgeGroup),
+         Ethnicity = as.factor(Ethnicity_Cleaned),
+         Gender = as.factor(Gender))
+
+```
+
+
+# KMO
+```{r}
+KMO(r=cor(lifestyle_dat_3))
+```
+
+## Bartlett’s test of sphericity
+```{r}
+cortest.bartlett(lifestyle_dat_3)
+```
+
+# 2 factors FA
+```{r}
+fafitfree <- lifestyle_dat_3 %>% scale() %>% fa(nfactors = 2, rotate = "oblimin", fm="ml")
+
+
+n_factors <- length(fafitfree$e.values)
+
+scree     <- data.frame(
+  Factor_n =  as.factor(1:n_factors), 
+  Eigenvalue = fafitfree$e.values)
+
+ggplot(scree, aes(x = Factor_n, y = Eigenvalue, group = 1)) + 
+  geom_point() + geom_line() +
+  xlab("Number of factors") +
+  ylab("Initial eigenvalue") +
+  labs( title = "Scree Plot", 
+        subtitle = "(Based on the unreduced correlation matrix)")
+```
+
+```{r}
+fafitfree[["loadings"]]
+#fafitfree["RMSEA"]
+```
+
+
+## Loading plot
+```{r}
+fafitfree[['scores']] %>%
+  unclass() %>%
+  as_tibble(rownames = "variables") %>%  # convert loadings to a tibble or easy plotting
+  ggplot(aes(x = ML1, y = ML2)) + #Selecting factors for X and Y
+  geom_text(aes(label = variables))
+```
+
+```{r}
+lifestyle_fa <- lifestyle_dat_3 %>% scale() %>% 
+  fa(nfactors = 2, rotate = "oblimin", fm="ml")
+
+lifestyle_fa %>% 
+  #principal(nfactors = 2, rotate = "oblimin") %>%
+  pluck("scores")  %>%
+  unclass()%>%
+  as_tibble(rownames = "id") -> fa_df
+fa_df %>%
+  mutate(id = as.double(id))-> fa_df
+
+fa_data <- fa_df %>%
+  column_to_rownames(var = "id")
+```
+
+
+# fit 1 K-means
+/ FA on lifestyle [k-means]
+
+```{r}
+factoextra ::fviz_nbclust(fa_data, kmeans, method = "silhouette")
+```
+
+<!--```{r}
+hierarchical_clusters <- hclust(dist(cluster_data))
+#fviz_dend(hierarchical_clusters, k = 4, cex = 0.4) # K= the number of clusters in the dendogram
+```-->
+
+
+## K=2
+```{r}
+set.seed(1234)
+kmeans_clusters <- kmeans(fa_data, centers = 2, nstart = 50) # selecting 4 clusters
+fviz_cluster(kmeans_clusters, data = fa_data, ggtheme = theme_minimal()) 
+```
+
+```{r}
+cluster_data <- kmeans_clusters$cluster %>% #view()
+  as_tibble(rownames = "id") %>%
+  rename("clusters" = value) %>% 
+  mutate(id=as.numeric(id)) %>% 
+  data.frame()
+```
+
+## Description
+```{r}
+seg_dat <- cluster_data %>%
+  left_join(lifestyle_dat_2, by = "id") %>%
+  left_join(fa_df, by = "id") %>%
+  left_join(df0, by = "id")
+```
+
+```{r}
+seg_dat %>%
+  group_by(clusters)%>% 
+  summarise(count=n())
+```
+
+```{r}
+
+df_long_1 <- seg_dat %>% 
+  select(Favourite_StayDuration,Favourite_VisitFrequency,General_Accessibility,
+         General_Affordability, General_TravelTime, General_VisitFrequency,
+         Health, wellbeing, InformalORS_Importance, nature_relatedness, 
+         NearbyORS_VisitFrequency, PostCovid_Visit, clusters) %>%
+    pivot_longer(
+    cols = -clusters, # Select all columns except for Group for pivoting
+    names_to = "Scale", # Name of the new column for the scale names
+    values_to = "Value" # Name of the new column for the values
+  )
+
+df_long_stsfc <- seg_dat %>% select(starts_with("Satisfaction_"), clusters) %>%
+    pivot_longer(
+    cols = -clusters, # Select all columns except for Group for pivoting
+    names_to = "Scale", # Name of the new column for the scale names
+    values_to = "Value" # Name of the new column for the values
+  )
+
+df_long_benefits <- seg_dat %>% select(starts_with("Benefits_"), clusters) %>%
+    pivot_longer(
+    cols = -clusters, # Select all columns except for Group for pivoting
+    names_to = "Scale", # Name of the new column for the scale names
+    values_to = "Value" # Name of the new column for the values
+  )
+
+df_long_lifestyle <- seg_dat %>% select(starts_with("Lifestyle_"), clusters) %>% #view()
+    pivot_longer(
+    cols = -clusters, # Select all columns except for Group for pivoting
+    names_to = "Scale", # Name of the new column for the scale names
+    values_to = "Value" # Name of the new column for the values
+  )
+
+df_long_fa <- seg_dat %>% select(starts_with("ML"), clusters) %>% #view()
+    pivot_longer(
+    cols = -clusters, # Select all columns except for Group for pivoting
+    names_to = "Scale", # Name of the new column for the scale names
+    values_to = "Value" # Name of the new column for the values
+  )
+  
+```
+
+
+```{r}
+ggplot(df_long_lifestyle, aes(x = as.factor(clusters), y = Value, fill = as.factor(clusters))) + 
+  geom_boxplot() + 
+  facet_wrap(facets = ~ (factor(Scale, 
+                                levels = c("Lifestyle_1", "Lifestyle_2", "Lifestyle_3", "Lifestyle_4", 
+                                           "Lifestyle_5", "Lifestyle_6", "Lifestyle_7", "Lifestyle_8", 
+                                           "Lifestyle_9", "Lifestyle_10", "Lifestyle_11", "Lifestyle_12"))),
+             scales = "free_y") + # Allows different y scales for each scale 
+  labs(title = "Boxplots by Clusters and Lifestyle", 
+       x = "Clusters", 
+       y = "", 
+       fill = "Cluster") +
+  scale_fill_manual(values = c("#EDDCA2", "#F69DA4", "#8AAEDB", "#AAD7A5"))
+  #scale_fill_brewer(palette = "Set3")
+```
+
+#### Box Plots and Descriptive Tables
+
+```{r}
+table1(~ML1 + ML2 | clusters, data = seg_dat)
+```
+
+
+```{r}
+table1(~ Lifestyle_1+ Lifestyle_2+Lifestyle_3+Lifestyle_4+Lifestyle_5+
+         Lifestyle_6+Lifestyle_7+Lifestyle_8+Lifestyle_9+Lifestyle_10+
+         Lifestyle_11+Lifestyle_12| clusters, #for grouping
+data = seg_dat
+)
+```
+
+```{r}
+table1(~ Gender + Ethnicity + AgeGroup + Income_Personal + Income_Household | clusters, #for grouping
+data = seg_dat
+)
+```
+
+```{r}
+ggplot(df_long_1, aes(x = as.factor(clusters), y = Value, fill = as.factor(clusters))) + 
+  geom_boxplot() + 
+  facet_wrap(~ Scale, scales = "free_y") + # Allows different y scales for each scale
+  labs(title = "Boxplots by Clusters and Scale", 
+       x = "Clusters", 
+       y = "", 
+       fill = "Cluster") +
+  scale_fill_manual(values = c("#EDDCA2", "#F69DA4", "#8AAEDB", "#AAD7A5"))
+```
+
+```{r}
+ggplot(df_long_stsfc, aes(x = as.factor(clusters), y = Value, fill = as.factor(clusters))) + 
+  geom_boxplot() + 
+  facet_wrap(~ Scale, scales = "free_y") + # Allows different y scales for each scale
+  labs(title = "Boxplots by Clusters and Scale", 
+       x = "Clusters", 
+       y = "", 
+       fill = "Cluster") +
+  scale_fill_manual(values = c("#EDDCA2", "#F69DA4", "#8AAEDB", "#AAD7A5", "#999999"))
+```
+
+```{r}
+ggplot(df_long_benefits, aes(x = as.factor(clusters), y = Value, fill = as.factor(clusters))) + 
+  geom_boxplot() + 
+  facet_wrap(~ Scale, scales = "free_y") + # Allows different y scales for each scale
+  labs(title = "Boxplots by Clusters and Scale", 
+       x = "Clusters", 
+       y = "", 
+       fill = "Cluster") +
+  scale_fill_manual(values = c("#EDDCA2", "#F69DA4", "#8AAEDB", "#AAD7A5", "#999999"))
+```
+
+# fit 2 K-mediod
+/ FA on lifestyle +sociodemo  [k-medoid]
+```{r}
+lifestyle_dat <- df0 %>%
+  select(id, AgeGroup, Ethnicity, Gender) %>%
+  left_join(fa_df) %>%
+  column_to_rownames(var="id")
+```
+
+```{r}
+gower_dist <- 
+  lifestyle_dat %>% 
+    daisy(metric = "gower")
+```
+
+k=4
+```{r}
+sil_width <- c(NA)
+for (i in 2:8) {  #exploring the number of clusters from 2 to 8
+  pam_fit      <- pam(gower_dist, diss = TRUE, k = i)  
+  sil_width[i] <- pam_fit$silinfo$avg.width  
+}
+```
+
+```{r}
+#Plotting silhouette
+sil_width %>% 
+  as_tibble() %>% 
+   rowid_to_column() %>% 
+   filter(rowid %in% c(2:8)) %>% 
+   ggplot(aes(rowid, value)) +
+   geom_line(colour  = 'black', size = 0.7) +
+   geom_point(colour = 'black', size = 1.3) +
+   labs(title = 'Silhouette Widths of k-medoid Clusters',
+        x     = "Number of clusters",
+        y     = 'Silhouette Width') +
+   theme(plot.title = element_text(hjust = 0.5))
+```
+
+## k = 4
+### Visualizing Cluster
+
+```{r}
+set.seed(123)
+
+pam.res <- 
+  gower_dist  %>% 
+    pam(k = 4, diss = TRUE)
+```
+
+```{r}
+tsne_obj <- Rtsne(gower_dist , is_distance = TRUE)
+tsne_obj$Y %>%
+  data.frame() %>%
+  setNames(c("X", "Y")) %>%
+  mutate(cluster = factor(pam.res$clustering)) %>% 
+  # plot
+  ggplot(aes(x = X, y = Y, colour = cluster)) +
+  geom_point()  +
+  theme_light() +
+  labs(title     = 't-SNE 2D Projections of k-medoid Clusters')  +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+cluster_data <- cbind(lifestyle_dat, cluster = pam.res$cluster) %>% data.frame() %>% 
+  rename(clusters = cluster) %>% 
+    mutate(clusters = as.factor(clusters)) %>% 
+  rownames_to_column(var="id") %>% 
+  select(id, clusters)
+  
+#head(df)
+```
+
+## Description
+```{r}
+cluster_data <- cluster_data %>%
+  mutate(id = as.double(id))
+
+seg_dat <- cluster_data %>%
+  left_join(lifestyle_dat_2, by = "id") %>%
+  left_join(fa_df, by = "id") %>%
+  left_join(df0, by = "id")
+```
+
+```{r}
+seg_dat %>%
+  group_by(clusters)%>% 
+  summarise(count=n())
+```
+
+```{r}
+df_long_1 <- seg_dat %>% 
+  select(Favourite_StayDuration,Favourite_VisitFrequency,General_Accessibility,
+         General_Affordability, General_TravelTime, General_VisitFrequency,
+         Health, wellbeing, InformalORS_Importance, nature_relatedness, 
+         NearbyORS_VisitFrequency, PostCovid_Visit, clusters) %>%
+    pivot_longer(
+    cols = -clusters, # Select all columns except for Group for pivoting
+    names_to = "Scale", # Name of the new column for the scale names
+    values_to = "Value" # Name of the new column for the values
+  )
+
+df_long_stsfc <- seg_dat %>% select(starts_with("Satisfaction_"), clusters) %>%
+    pivot_longer(
+    cols = -clusters, # Select all columns except for Group for pivoting
+    names_to = "Scale", # Name of the new column for the scale names
+    values_to = "Value" # Name of the new column for the values
+  )
+
+df_long_benefits <- seg_dat %>% select(starts_with("Benefits_"), clusters) %>%
+    pivot_longer(
+    cols = -clusters, # Select all columns except for Group for pivoting
+    names_to = "Scale", # Name of the new column for the scale names
+    values_to = "Value" # Name of the new column for the values
+  )
+
+df_long_lifestyle <- seg_dat %>% select(starts_with("Lifestyle_"), clusters) %>% #view()
+    pivot_longer(
+    cols = -clusters, # Select all columns except for Group for pivoting
+    names_to = "Scale", # Name of the new column for the scale names
+    values_to = "Value" # Name of the new column for the values
+  )
+
+df_long_fa <- seg_dat %>% select(starts_with("ML"), clusters) %>% #view()
+    pivot_longer(
+    cols = -clusters, # Select all columns except for Group for pivoting
+    names_to = "Scale", # Name of the new column for the scale names
+    values_to = "Value" # Name of the new column for the values
+  )
+  
+```
+
+
+```{r}
+ggplot(df_long_lifestyle, aes(x = as.factor(clusters), y = Value, fill = as.factor(clusters))) + 
+  geom_boxplot() + 
+  facet_wrap(facets = ~ (factor(Scale, 
+                                levels = c("Lifestyle_1", "Lifestyle_2", "Lifestyle_3", "Lifestyle_4", 
+                                           "Lifestyle_5", "Lifestyle_6", "Lifestyle_7", "Lifestyle_8", 
+                                           "Lifestyle_9", "Lifestyle_10", "Lifestyle_11", "Lifestyle_12"))),
+             scales = "free_y") + # Allows different y scales for each scale 
+  labs(title = "Boxplots by Clusters and Lifestyle", 
+       x = "Clusters", 
+       y = "", 
+       fill = "Cluster") +
+  scale_fill_manual(values = c("#EDDCA2", "#F69DA4", "#8AAEDB", "#AAD7A5"))
+  #scale_fill_brewer(palette = "Set3")
+```
+
+#### Box Plots and Descriptive Tables
+
+```{r}
+table1(~ML1 + ML2 | clusters, data = seg_dat)
+```
+
+
+```{r}
+table1(~ Lifestyle_1+ Lifestyle_2+Lifestyle_3+Lifestyle_4+Lifestyle_5+
+         Lifestyle_6+Lifestyle_7+Lifestyle_8+Lifestyle_9+Lifestyle_10+
+         Lifestyle_11+Lifestyle_12| clusters, #for grouping
+data = seg_dat
+)
+```
+
+```{r}
+table1(~ Gender + Ethnicity + AgeGroup + Income_Personal + Income_Household | clusters, #for grouping
+data = seg_dat
+)
+```
+
+```{r}
+ggplot(df_long_1, aes(x = as.factor(clusters), y = Value, fill = as.factor(clusters))) + 
+  geom_boxplot() + 
+  facet_wrap(~ Scale, scales = "free_y") + # Allows different y scales for each scale
+  labs(title = "Boxplots by Clusters and Scale", 
+       x = "Clusters", 
+       y = "", 
+       fill = "Cluster") +
+  scale_fill_manual(values = c("#EDDCA2", "#F69DA4", "#8AAEDB", "#AAD7A5"))
+```
+
+```{r}
+ggplot(df_long_stsfc, aes(x = as.factor(clusters), y = Value, fill = as.factor(clusters))) + 
+  geom_boxplot() + 
+  facet_wrap(~ Scale, scales = "free_y") + # Allows different y scales for each scale
+  labs(title = "Boxplots by Clusters and Scale", 
+       x = "Clusters", 
+       y = "", 
+       fill = "Cluster") +
+  scale_fill_manual(values = c("#EDDCA2", "#F69DA4", "#8AAEDB", "#AAD7A5", "#999999"))
+```
+
+```{r}
+ggplot(df_long_benefits, aes(x = as.factor(clusters), y = Value, fill = as.factor(clusters))) + 
+  geom_boxplot() + 
+  facet_wrap(~ Scale, scales = "free_y") + # Allows different y scales for each scale
+  labs(title = "Boxplots by Clusters and Scale", 
+       x = "Clusters", 
+       y = "", 
+       fill = "Cluster") +
+  scale_fill_manual(values = c("#EDDCA2", "#F69DA4", "#8AAEDB", "#AAD7A5", "#999999"))
+```
+
+# fit 3 K-mediod
+/ FA on lifestyle +sociodemo+health and wellbeing  [k-medoid]
+```{r}
+lifestyle_dat <- df0 %>%
+  select(id, AgeGroup, Ethnicity, Gender, Health, wellbeing) %>%
+  left_join(fa_df) %>%
+  column_to_rownames(var="id")
+```
+
+```{r}
+gower_dist <- 
+  lifestyle_dat %>% 
+    daisy(metric = "gower")
+```
+
+k=4
+```{r}
+sil_width <- c(NA)
+for (i in 2:8) {  #exploring the number of clusters from 2 to 8
+  pam_fit      <- pam(gower_dist, diss = TRUE, k = i)  
+  sil_width[i] <- pam_fit$silinfo$avg.width  
+}
+```
+
+```{r}
+#Plotting silhouette
+sil_width %>% 
+  as_tibble() %>% 
+   rowid_to_column() %>% 
+   filter(rowid %in% c(2:8)) %>% 
+   ggplot(aes(rowid, value)) +
+   geom_line(colour  = 'black', size = 0.7) +
+   geom_point(colour = 'black', size = 1.3) +
+   labs(title = 'Silhouette Widths of k-medoid Clusters',
+        x     = "Number of clusters",
+        y     = 'Silhouette Width') +
+   theme(plot.title = element_text(hjust = 0.5))
+```
+
+## k = 4
+### Visualizing Cluster
+
+```{r}
+set.seed(123)
+
+pam.res <- 
+  gower_dist  %>% 
+    pam(k = 4, diss = TRUE)
+```
+
+```{r}
+tsne_obj <- Rtsne(gower_dist , is_distance = TRUE)
+tsne_obj$Y %>%
+  data.frame() %>%
+  setNames(c("X", "Y")) %>%
+  mutate(cluster = factor(pam.res$clustering)) %>% 
+  # plot
+  ggplot(aes(x = X, y = Y, colour = cluster)) +
+  geom_point()  +
+  theme_light() +
+  labs(title     = 't-SNE 2D Projections of k-medoid Clusters')  +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+cluster_data <- cbind(lifestyle_dat, cluster = pam.res$cluster) %>% data.frame() %>% 
+  rename(clusters = cluster) %>% 
+    mutate(clusters = as.factor(clusters)) %>% 
+  rownames_to_column(var="id") %>% 
+  select(id, clusters)
+  
+#head(df)
+```
+
+## Description
+```{r}
+cluster_data <- cluster_data %>%
+  mutate(id = as.double(id))
+
+seg_dat <- cluster_data %>%
+  left_join(lifestyle_dat_2, by = "id") %>%
+  left_join(fa_df, by = "id") %>%
+  left_join(df0, by = "id")
+```
+
+```{r}
+seg_dat %>%
+  group_by(clusters)%>% 
+  summarise(count=n())
+```
+
+```{r}
+df_long_1 <- seg_dat %>% 
+  select(Favourite_StayDuration,Favourite_VisitFrequency,General_Accessibility,
+         General_Affordability, General_TravelTime, General_VisitFrequency,
+         Health, wellbeing, InformalORS_Importance, nature_relatedness, 
+         NearbyORS_VisitFrequency, PostCovid_Visit, clusters) %>%
+    pivot_longer(
+    cols = -clusters, # Select all columns except for Group for pivoting
+    names_to = "Scale", # Name of the new column for the scale names
+    values_to = "Value" # Name of the new column for the values
+  )
+
+df_long_stsfc <- seg_dat %>% select(starts_with("Satisfaction_"), clusters) %>%
+    pivot_longer(
+    cols = -clusters, # Select all columns except for Group for pivoting
+    names_to = "Scale", # Name of the new column for the scale names
+    values_to = "Value" # Name of the new column for the values
+  )
+
+df_long_benefits <- seg_dat %>% select(starts_with("Benefits_"), clusters) %>%
+    pivot_longer(
+    cols = -clusters, # Select all columns except for Group for pivoting
+    names_to = "Scale", # Name of the new column for the scale names
+    values_to = "Value" # Name of the new column for the values
+  )
+
+df_long_lifestyle <- seg_dat %>% select(starts_with("Lifestyle_"), clusters) %>% #view()
+    pivot_longer(
+    cols = -clusters, # Select all columns except for Group for pivoting
+    names_to = "Scale", # Name of the new column for the scale names
+    values_to = "Value" # Name of the new column for the values
+  )
+
+df_long_fa <- seg_dat %>% select(starts_with("ML"), clusters) %>% #view()
+    pivot_longer(
+    cols = -clusters, # Select all columns except for Group for pivoting
+    names_to = "Scale", # Name of the new column for the scale names
+    values_to = "Value" # Name of the new column for the values
+  )
+  
+```
+
+
+```{r}
+ggplot(df_long_lifestyle, aes(x = as.factor(clusters), y = Value, fill = as.factor(clusters))) + 
+  geom_boxplot() + 
+  facet_wrap(facets = ~ (factor(Scale, 
+                                levels = c("Lifestyle_1", "Lifestyle_2", "Lifestyle_3", "Lifestyle_4", 
+                                           "Lifestyle_5", "Lifestyle_6", "Lifestyle_7", "Lifestyle_8", 
+                                           "Lifestyle_9", "Lifestyle_10", "Lifestyle_11", "Lifestyle_12"))),
+             scales = "free_y") + # Allows different y scales for each scale 
+  labs(title = "Boxplots by Clusters and Lifestyle", 
+       x = "Clusters", 
+       y = "", 
+       fill = "Cluster") +
+  scale_fill_manual(values = c("#EDDCA2", "#F69DA4", "#8AAEDB", "#AAD7A5"))
+  #scale_fill_brewer(palette = "Set3")
+```
+
+#### Box Plots and Descriptive Tables
+
+```{r}
+table1(~ML1 + ML2 | clusters, data = seg_dat)
+```
+
+
+```{r}
+table1(~ Lifestyle_1+ Lifestyle_2+Lifestyle_3+Lifestyle_4+Lifestyle_5+
+         Lifestyle_6+Lifestyle_7+Lifestyle_8+Lifestyle_9+Lifestyle_10+
+         Lifestyle_11+Lifestyle_12| clusters, #for grouping
+data = seg_dat
+)
+```
+
+```{r}
+table1(~ Gender + Ethnicity + AgeGroup + Income_Personal + Income_Household | clusters, #for grouping
+data = seg_dat
+)
+```
+
+```{r}
+ggplot(df_long_1, aes(x = as.factor(clusters), y = Value, fill = as.factor(clusters))) + 
+  geom_boxplot() + 
+  facet_wrap(~ Scale, scales = "free_y") + # Allows different y scales for each scale
+  labs(title = "Boxplots by Clusters and Scale", 
+       x = "Clusters", 
+       y = "", 
+       fill = "Cluster") +
+  scale_fill_manual(values = c("#EDDCA2", "#F69DA4", "#8AAEDB", "#AAD7A5"))
+```
+
+```{r}
+ggplot(df_long_stsfc, aes(x = as.factor(clusters), y = Value, fill = as.factor(clusters))) + 
+  geom_boxplot() + 
+  facet_wrap(~ Scale, scales = "free_y") + # Allows different y scales for each scale
+  labs(title = "Boxplots by Clusters and Scale", 
+       x = "Clusters", 
+       y = "", 
+       fill = "Cluster") +
+  scale_fill_manual(values = c("#EDDCA2", "#F69DA4", "#8AAEDB", "#AAD7A5", "#999999"))
+```
+
+```{r}
+ggplot(df_long_benefits, aes(x = as.factor(clusters), y = Value, fill = as.factor(clusters))) + 
+  geom_boxplot() + 
+  facet_wrap(~ Scale, scales = "free_y") + # Allows different y scales for each scale
+  labs(title = "Boxplots by Clusters and Scale", 
+       x = "Clusters", 
+       y = "", 
+       fill = "Cluster") +
+  scale_fill_manual(values = c("#EDDCA2", "#F69DA4", "#8AAEDB", "#AAD7A5", "#999999"))
+```
+
+
+
+
+
+
+
+
+
